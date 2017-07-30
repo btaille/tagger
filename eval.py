@@ -43,7 +43,7 @@ def micro_precision_recall_f1_accuracy(truths, preds):
     return pre, rec, f1, acc
 
 
-def eval_metrics(preds, metrics, tags, sents_test_ner, tag2idx, idx2tag, model_path):
+def eval_metrics(preds, metrics, tags, sents_test_ner, tag2idx, idx2tag, model_path, dev=False):
     task = "ner"
     if len(preds):
         p, r, f, acc = micro_precision_recall_f1_accuracy(
@@ -52,15 +52,25 @@ def eval_metrics(preds, metrics, tags, sents_test_ner, tag2idx, idx2tag, model_p
         )
 
         print("%s : p %s, r %s, f %s, acc %s" % (task, p, r, f, acc))
+        
+        if dev:
+            metrics[task]["precision"].append(p)
+            metrics[task]["recall"].append(r)
+            metrics[task]["f1"].append(f)
+            metrics[task]["accuracy"].append(acc)
 
-        metrics[task]["precision"].append(p)
-        metrics[task]["recall"].append(r)
-        metrics[task]["f1"].append(f)
-        metrics[task]["accuracy"].append(acc)
+            ner_f1 = eval_ner(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path, name="dev")
+            metrics[task]["ent_f1"].append(ner_f1)
+            
+        else:
+            metrics[task]["precision_test"].append(p)
+            metrics[task]["recall_test"].append(r)
+            metrics[task]["f1_test"].append(f)
+            metrics[task]["accuracy_test"].append(acc)
 
-        ner_f1 = eval_ner(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path)
-        metrics[task]["ent_f1"].append(ner_f1)
-
+            ner_f1 = eval_ner(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path)
+            metrics[task]["ent_f1_test"].append(ner_f1)
+            
 
 def eval_ner(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path, name="test"):
     ner_preds = [[idx2tag[i] for i in np.argmax(p, axis=1)] for p in preds]
@@ -73,8 +83,49 @@ def eval_ner(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path, name="te
     return ner_f1
 
 
+def eval_metrics_crf(preds, metrics, tags, sents_test_ner, tag2idx, idx2tag, model_path, dev=False):
+    task = "ner"
+    if len(preds):
+        
+        p, r, f, acc = micro_precision_recall_f1_accuracy(
+            np.concatenate(tags),
+            np.concatenate(preds)
+        )
+
+        print("%s : p %s, r %s, f %s, acc %s" % (task, p, r, f, acc))
+        
+        if dev:
+            metrics[task]["precision"].append(p)
+            metrics[task]["recall"].append(r)
+            metrics[task]["f1"].append(f)
+            metrics[task]["accuracy"].append(acc)
+
+            ner_f1 = eval_ner_crf(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path, name="dev")
+            metrics[task]["ent_f1"].append(ner_f1)
+            
+        else:
+            metrics[task]["precision_test"].append(p)
+            metrics[task]["recall_test"].append(r)
+            metrics[task]["f1_test"].append(f)
+            metrics[task]["accuracy_test"].append(acc)
+
+            ner_f1 = eval_ner_crf(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path)
+            metrics[task]["ent_f1_test"].append(ner_f1)
+            
+
+def eval_ner_crf(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path, name="test"):
+    ner_preds = [[idx2tag[i] for i in preds[idx]] for idx in range(len(preds))]
+    ner_truths = [[idx2tag[i] for i in tags[idx]] for idx in range(len(tags))]
+
+    ner_f1 = conll_eval(sents_test_ner, ner_truths, ner_preds, tag2idx, idx2tag, model_path, name="ner_" + name)
+
+    print("NER f1 : %s" % ner_f1)
+
+    return ner_f1
+
+
 def conll_eval(sents, truths, preds, tag_to_id, id_to_tag, model_path, name="test"):
-    eval_script = "/media/bruno/DATA/Projects/NER/conlleval"
+    eval_script =  "/media/bruno/DATA/Projects/NER/conlleval"
 
     n_tags = len(tag_to_id)
     predictions = []
@@ -130,26 +181,30 @@ def save_plot(metrics, model_path):
     # NER
     plt.subplot(131)
     plt.plot(metrics["ner"]["loss"])
-    plt.plot(metrics["ner"]["val_loss"])
+    plt.plot(metrics["ner"]["val_loss_dev"])
+    plt.plot(metrics["ner"]["val_loss_test"])
+    
     plt.title("NER loss")
     plt.ylabel('loss')
     plt.xlabel('epochs')
-    plt.legend(['train', 'dev'], loc='upper left')
+    plt.legend(['train', 'dev', 'test'], loc='upper left')
 
     plt.subplot(132)
     plt.plot(metrics["ner"]["accuracy"])
+    plt.plot(metrics["ner"]["accuracy_test"])
     plt.title("NER accuracy")
     plt.ylabel('accuracy')
     plt.xlabel('epochs')
-    plt.legend(['acc'], loc='upper left')
+    plt.legend(['dev', 'test'], loc='upper left')
 
     plt.subplot(133)
     plt.plot(metrics["ner"]["ent_f1"])
+    plt.plot(metrics["ner"]["ent_f1_test"])    
     plt.plot(np.ones(len(metrics["ner"]["ent_f1"])) * 91.2)
     plt.plot(np.ones(len(metrics["ner"]["ent_f1"])) * 90.94)
     plt.title("NER entity F1")
     plt.ylabel('F1')
     plt.xlabel('epochs')
-    plt.legend(['f1', 'best', 'Lample'], loc='lower right')
+    plt.legend(['dev', 'test', 'best', 'Lample'], loc='lower right')
 
     plt.savefig(model_path + "graphs.png", dpi=90)

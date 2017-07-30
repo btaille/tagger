@@ -43,6 +43,9 @@ def load_vocab(embeddings_path):
     idx2word = dict([(v, k) for k, v in data.items()])
     return word2idx, idx2word
 
+def convert_glove(embeddings_path):
+    assert os.path.isfile(embeddings_path)
+    os.system("python3 -m gensim.scripts.glove2word2vec --input  %s --output %s_w2vformat.txt" % (embeddings_path, embeddings_path.split(".txt")[0]))
 
 if __name__ == "__main__":
     w, v = load_embeddings(embeddings_path)

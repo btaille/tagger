@@ -1,6 +1,7 @@
 from nltk.corpus.reader.conll import ConllCorpusReader
 from time import time
-
+import os
+import pickle
 
 def load_conll03(files=["eng.train", "eng.testa", "eng.testb"], max_len=200):
     start = time()
@@ -93,3 +94,31 @@ def clean_conll03(file, output):
             for w, pos, chunk, ne in zip(s, poses[i], corrected_chunks[i], corrected_nes[i]):
                 file.write(" ".join([w, pos, chunk, ne]) + "\n")
             file.write("\n")
+            
+            
+def load_internal_conll(files, data_path = "data/wikipedia2/"):
+    start = time()  
+    
+    if os.path.exists(data_path + "_".join(files) + ".p"):
+        with open(data_path + "_".join(files) + ".p", "rb") as file:
+            data = pickle.load(file)
+    else:
+        columntypes = ["words", "pos", "chunk"]
+        conll_reader = ConllCorpusReader(data_path, files, columntypes)
+
+        data = []
+        sentences = conll_reader.iob_sents()
+
+        for s in sentences:
+            if not s == []:
+                w, ne, link = zip(*s)
+                stats = {}
+                for label in ["O", "ORG", "PER", "LOC", "VESSEL", "MISC"]:
+                    stats[label] = np.sum([int(t == "O") if label == "O" else int(label in t) for t in ne])
+                data.append((w, ne, link, stats))
+
+        with open(data_path + "_".join(files) + ".p", "wb") as file:
+            pickle.dump(data, file)
+
+    print("Loaded %s in %s seconds" % ('_'.join(files), time() - start))
+    return data

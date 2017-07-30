@@ -1,5 +1,5 @@
 import numpy as np
-
+import torch
 
 def cap_feature(s):
     """
@@ -79,3 +79,27 @@ def tag_mapping(tags, tag2idx=None):
         print("Found %i unique named entity tags" % len(dictionary))
         idtags = [[tag2idx[t] for t in s] for s in tags]
     return idtags, tag2idx, idx2tag
+
+class CoNLLDataset(torch.utils.data.Dataset):
+    def __init__(self, X, y, lens):
+        self.data = X
+        self.labels = y
+        self.lens = lens
+        
+    def __getitem__(self, idx):
+        return self.data[idx], self.labels[idx], self.lens[idx]
+
+    def __len__(self):
+        return len(self.data)
+
+def pad_list(x, pad_index=0):
+    lens = [len(s) for s in x]
+    maxlen = max(lens)    
+    sorted_indices = sorted(range(len(lens)), key=lambda k: lens[k], reverse=True)
+    
+    batch = pad_index * torch.ones(len(x), maxlen).long()
+    
+    for i, idx in enumerate(sorted_indices):
+        batch[i, :lens[idx]] = torch.LongTensor(x[idx])
+    
+    return batch, sorted(lens, reverse=True), sorted_indices
