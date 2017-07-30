@@ -11,7 +11,7 @@ def sent2chars(sents, c2idx, idx_unknown=None, inv=False):
     if idx_unknown is None:
         idx_unknown = max(c2idx.values())
     if inv:
-        return [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w[::-1]] for w in sent] for sent in sents]
+        return  [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w] for w in sent] for sent in sents], [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w[::-1]] for w in sent] for sent in sents]
     else:
         return [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w] for w in sent] for sent in sents]
 

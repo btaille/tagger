@@ -64,10 +64,8 @@ class Tagger(nn.Module):
 
             # character-level word embeddings
             self.char_hidden_dim = char_hidden_dim
-            self.lstm_char_forward = nn.LSTM(char_embeddings.size(1), self.char_hidden_dim // 2)
-            self.hidden_char_forward = self.init_hidden_char()
-            self.lstm_char_backward = nn.LSTM(char_embeddings.size(1), self.char_hidden_dim // 2)
-            self.hidden_char_backward = self.init_hidden_char()
+            self.lstm_char = nn.LSTM(char_embeddings.size(1), self.char_hidden_dim // 2, bidirectional=True)
+            self.hidden_char = self.init_hidden_char()
 
         else:
             self.char = False
@@ -97,8 +95,8 @@ class Tagger(nn.Module):
                 cuda(autograd.Variable(torch.randn(2, batch_size, self.hidden_dim // 2))))
 
     def init_hidden_char(self, batch_size=1):
-        return (cuda(autograd.Variable(torch.randn(1, batch_size, self.char_hidden_dim // 2))),
-                cuda(autograd.Variable(torch.randn(1, batch_size, self.char_hidden_dim // 2))))
+        return (cuda(autograd.Variable(torch.randn(2, batch_size, self.char_hidden_dim // 2))),
+                cuda(autograd.Variable(torch.randn(2, batch_size, self.char_hidden_dim // 2))))
 
     def init_char_embeddings(self, sent_len, batch_size=1):
         return cuda(autograd.Variable(torch.randn(sent_len, batch_size, self.char_hidden_dim // 2)))
@@ -125,9 +123,9 @@ class Tagger(nn.Module):
             next_tag_vars = alphas + trans + emit_scores
             forward_var = log_sum_exp(next_tag_vars)
 
-            if i+1 in set(lens):
+            if i + 1 in set(lens):
                 for k in range(len(lens)):
-                    if lens[k] == i+1:
+                    if lens[k] == i + 1:
                         terminal_var[k] = terminal_var[k] + forward_var[k]
 
         alpha = log_sum_exp(terminal_var)
@@ -145,7 +143,6 @@ class Tagger(nn.Module):
                     self.transitions[tags[i + 1], tags[i]] + feat[tags[i + 1]]
         score = score + self.transitions[self.tag2idx["<STOP>"], tags[-1]]
         return score
-
 
     def _viterbi_decode(self, feats):
         backpointers = []
@@ -181,8 +178,7 @@ class Tagger(nn.Module):
         best_path.reverse()
         return path_score, best_path
 
-
-    def neg_log_likelihood(self, sentences, lens, tags, test=0, gradient_clipping=0):
+    def neg_log_likelihood(self, sentences, lens, tags, chars=None, test=0, gradient_clipping=0):
         if len(sentences.size()) > 1:
             batch_size = sentences.size(0)
         else:
@@ -192,6 +188,24 @@ class Tagger(nn.Module):
         self.hidden = self.init_hidden(batch_size=batch_size)
 
         w_embeds = self.word_embeddings(sentences)
+
+        # character embeddings
+        if self.char:
+            c_embeds = self.init_char_embeddings(sentences.size(1))
+
+            for i, w_char in enumerate(chars):
+                self.hidden_char = self.init_hidden_char()
+
+                char_embeds = self.char_embeddings(w_char)
+
+                c_embeds, self.hidden_char = self.lstm_char(
+                    char_embeds.view(len(w_char), 1, -1), self.hidden_char)
+
+                c_embeds[i] = c_embeds[-1]
+
+            w_embeds = torch.cat((w_embeds,
+                                  c_embeds.view(-1, self.char_hidden_dim)),
+                                 1)
 
         # ner
         if test:
@@ -220,7 +234,6 @@ class Tagger(nn.Module):
         forward_scores = self._forward_alg_batch(padded_feats[0], lens)
 
         return torch.mean(forward_scores - gold_scores)
-
 
     def forward(self, sentences, lens, test=0, gradient_clipping=0):
         if len(sentences.size()) > 1:
@@ -314,7 +327,7 @@ class Tagger(nn.Module):
                     cat.append(p)
             preds = cat
 
-        #         for i, (s, t, l) in enumerate(zip(tqdm(sentences), tags)):
+        # for i, (s, t, l) in enumerate(zip(tqdm(sentences), tags)):
         #             inputs = prepare_sequence(s, volatile=True)
         #             targets = prepare_sequence(t, volatile=True)
 
