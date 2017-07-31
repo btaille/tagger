@@ -6,10 +6,6 @@ from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence, Packed
 
 from tqdm import tqdm
 
-from time import time
-
-from torch_utils import prepare_sequence
-
 import numpy as np
 
 
@@ -58,6 +54,7 @@ class Tagger(nn.Module):
         self.word_embeddings.weight = nn.Parameter(w_embeddings)
 
         if char_embeddings is not None and char_hidden_dim is not None:
+            self.char_dim = char_embeddings.size(1)
             self.char_embeddings = nn.Embedding(char_embeddings.size(0), char_embeddings.size(1))
             self.char_embeddings.weight = nn.Parameter(char_embeddings)
             self.char = True
@@ -99,13 +96,12 @@ class Tagger(nn.Module):
                 cuda(autograd.Variable(torch.randn(2, batch_size, self.char_hidden_dim // 2))))
 
     def init_char_embeddings(self, sent_len, batch_size=1):
-        return cuda(autograd.Variable(torch.randn(sent_len, batch_size, self.char_hidden_dim // 2)))
+        return cuda(autograd.Variable(torch.randn(sent_len, batch_size, self.char_hidden_dim)))
 
     def _forward_alg_batch(self, feats, lens):
         batch_size = feats.size(0)
         # Do the forward algorithm to compute the partition function
         init_alphas = cuda(torch.Tensor(batch_size, self.tagset_size, 1).fill_(-10000.))
-        # START_TAG has all of the score.
         init_alphas[:, self.tag2idx["<START>"], 0] = 0.
 
         forward_var = autograd.Variable(init_alphas)
@@ -146,7 +142,6 @@ class Tagger(nn.Module):
 
     def _viterbi_decode(self, feats):
         backpointers = []
-
         # Initialize the viterbi variables in log space
         init_vvars = cuda(torch.Tensor(1, self.tagset_size).fill_(-10000.))
         init_vvars[0][self.tag2idx["<START>"]] = 0
@@ -162,7 +157,7 @@ class Tagger(nn.Module):
             forward_var = (viterbivars + feat).view(1, -1)
             backpointers.append(bptrs_t)
 
-            # Transition to STOP_TAG
+        # Transition to STOP_TAG
         terminal_var = forward_var + self.transitions[self.tag2idx["<STOP>"]]
         best_tag_id = argmax(terminal_var)
         path_score = terminal_var[0][best_tag_id]
@@ -178,7 +173,30 @@ class Tagger(nn.Module):
         best_path.reverse()
         return path_score, best_path
 
-    def neg_log_likelihood(self, sentences, lens, tags, chars=None, test=0, gradient_clipping=0):
+    def compute_chars_embeddings(self, chars, lens,  wlens, wsorted):
+        wc_embeds = self.init_char_embeddings(lens[0], batch_size=chars.size(0))
+
+        for i, (char, slen, wlen, wsort) in enumerate(zip(chars, lens, wlens, wsorted)):
+            self.hidden_char = self.init_hidden_char(batch_size=slen)
+            char_embeds = self.char_embeddings(char)
+            packed_chars = pack_padded_sequence(char_embeds[:slen], sorted(wlen.numpy()[:slen], reverse=True),
+                                                batch_first=True)
+
+            c_embeds, self.hidden_char = self.lstm_char(packed_chars, self.hidden_char)
+
+            padded_chars, wlens_sorted = pad_packed_sequence(c_embeds, batch_first=True)
+
+            reordered = torch.zeros(lens[0], self.char_hidden_dim).long()
+            for k, s in enumerate(wsort.numpy()[:slen]):
+                reordered[s] = padded_chars[k, wlens_sorted[k] - 1, :].long().data
+
+            wc_embeds[:, i] = reordered
+
+        return wc_embeds
+
+
+    def neg_log_likelihood(self, sentences, lens, tags, chars=None, wlens=None, wsorted=None, test=0,
+                           gradient_clipping=0):
         if len(sentences.size()) > 1:
             batch_size = sentences.size(0)
         else:
@@ -191,22 +209,11 @@ class Tagger(nn.Module):
 
         # character embeddings
         if self.char:
-            c_embeds = self.init_char_embeddings(sentences.size(1))
-
-            for i, w_char in enumerate(chars):
-                self.hidden_char = self.init_hidden_char()
-
-                char_embeds = self.char_embeddings(w_char)
-
-                c_embeds, self.hidden_char = self.lstm_char(
-                    char_embeds.view(len(w_char), 1, -1), self.hidden_char)
-
-                c_embeds[i] = c_embeds[-1]
-
+            assert chars is not None and wlens is not None and wsorted is not None
+            wc_embeds = self.compute_chars_embeddings(chars, lens, wlens, wsorted)
             w_embeds = torch.cat((w_embeds,
-                                  c_embeds.view(-1, self.char_hidden_dim)),
-                                 1)
-
+                                  wc_embeds.view(batch_size, -1, self.char_hidden_dim)),
+                                 2)
         # ner
         if test:
             inputs = (1. - self.dropout) * w_embeds
@@ -218,24 +225,22 @@ class Tagger(nn.Module):
 
         lstm_feats = self.hidden2tag(lstm_out.data.view(-1, self.hidden_dim))
 
-        padded_feats = pad_packed_sequence(PackedSequence(lstm_feats, lstm_out.batch_sizes), batch_first=True)
-
         if not test and gradient_clipping:
-            # lstm_out = clip_grad(lstm_out, - gradient_clipping,  gradient_clipping)
+            lstm_out = clip_grad(lstm_out, - gradient_clipping, gradient_clipping)
             lstm_feats = clip_grad(lstm_feats, - gradient_clipping, gradient_clipping)
-            # forward_score = clip_grad(forward_score, - gradient_clipping,  gradient_clipping)
+
+        padded_feats, lens = pad_packed_sequence(PackedSequence(lstm_feats, lstm_out.batch_sizes), batch_first=True)
 
         gold_scores = cuda(autograd.Variable(torch.zeros((batch_size))))
-        lens = padded_feats[1]
 
-        for i, feat in enumerate(padded_feats[0]):
+        for i, feat in enumerate(padded_feats):
             gold_scores[i] = self._score_sentence(feat[:lens[i]], tags[i][:lens[i]].view(-1))
 
-        forward_scores = self._forward_alg_batch(padded_feats[0], lens)
+        forward_scores = self._forward_alg_batch(padded_feats, lens)
 
         return torch.mean(forward_scores - gold_scores)
 
-    def forward(self, sentences, lens, test=0, gradient_clipping=0):
+    def forward(self, sentences, lens, chars=None, wlens=None, wsorted=None, test=0, gradient_clipping=0):
         if len(sentences.size()) > 1:
             batch_size = sentences.size(0)
         else:
@@ -246,13 +251,21 @@ class Tagger(nn.Module):
 
         w_embeds = self.word_embeddings(sentences)
 
+        # character embeddings
+        if self.char:
+            assert chars is not None and wlens is not None and wsorted is not None
+            wc_embeds = self.compute_chars_embeddings(chars, lens, wlens, wsorted)
+            w_embeds = torch.cat((w_embeds,
+                                  wc_embeds.view(batch_size, -1, self.char_hidden_dim)),
+                                 2)
+
         # ner
         if test:
             inputs = (1. - self.dropout) * w_embeds
         else:
             inputs = self.drop(w_embeds)
 
-        packed = pack_padded_sequence(w_embeds, lens.numpy(), batch_first=True)
+        packed = pack_padded_sequence(inputs, lens.numpy(), batch_first=True)
         lstm_out, self.hidden = self.lstm(packed, self.hidden)
 
         lstm_feats = self.hidden2tag(lstm_out.data.view((-1, self.hidden_dim)))
@@ -272,9 +285,6 @@ class Tagger(nn.Module):
                 scores.append(score)
                 tag_seqs.append(tag_seq)
 
-            if not test and gradient_clipping:
-                score = clip_grad(score, - gradient_clipping, gradient_clipping)
-
             return scores, tag_seqs
 
         else:
@@ -282,8 +292,6 @@ class Tagger(nn.Module):
 
             if not test and gradient_clipping:
                 tag_scores = clip_grad(tag_scores, - gradient_clipping, gradient_clipping)
-
-            # tag_scores = pad_packed_sequence((tag_scores, batch_out))
 
             return PackedSequence(tag_scores, lstm_out.batch_sizes)
 
@@ -294,12 +302,13 @@ class Tagger(nn.Module):
         padded_scores = []
 
         if not self.crf:
-            for i, (sentences, tags, lens) in tqdm(enumerate(loader)):
-                sentences_in = autograd.Variable(cuda(sentences[:, :lens.numpy()[0]]), volatile=True)
+            for i, (words, chars, tags, lens, wlens, wsorted) in tqdm(enumerate(loader)):
+                words_in = autograd.Variable(cuda(words[:, :lens.numpy()[0]]), volatile=True)
+                chars_in = autograd.Variable(cuda(chars[:, :lens.numpy()[0]]), volatile=True)
                 targets = autograd.Variable(cuda(tags[:, :lens.numpy()[0]]), volatile=True)
                 packed_targets = pack_padded_sequence(targets, lens.numpy(), batch_first=True)
 
-                scores = self.forward(sentences_in, lens, test=1)
+                scores = self.forward(words_in, lens, chars=chars_in, wlens=wlens, wsorted=wsorted, test=1)
 
                 padded_scores.append(pad_packed_sequence(scores))
                 losses.append(nn.CrossEntropyLoss()(scores.data, packed_targets.data).cpu().data.numpy()[0])
@@ -310,14 +319,16 @@ class Tagger(nn.Module):
                     preds.append(pred_batch[i, :lens[i]].tolist())
 
         else:
-            for i, (sentences, tags, lens) in tqdm(enumerate(loader)):
-                sentences_in = autograd.Variable(cuda(sentences[:, :lens.numpy()[0]]), volatile=True)
+            for i, (words, chars, tags, lens, wlens, wsorted) in tqdm(enumerate(loader)):
+                words_in = autograd.Variable(cuda(words[:, :lens.numpy()[0]]), volatile=True)
+                chars_in = autograd.Variable(cuda(chars[:, :lens.numpy()[0]]), volatile=True)
                 targets = autograd.Variable(cuda(tags[:, :lens.numpy()[0]]), volatile=True)
-                packed_targets = pack_padded_sequence(targets, lens.numpy(), batch_first=True)
 
-                neg_log_likelihood = self.neg_log_likelihood(sentences_in, lens, targets)
+                neg_log_likelihood = self.neg_log_likelihood(words_in, lens, targets, chars=chars_in,
+                                                             wlens=wlens, wsorted=wsorted)
 
-                preds.append(self.forward(sentences_in, lens, test=1)[1])
+                preds.append(self.forward(words_in, lens, chars=chars_in,
+                                          wlens=wlens, wsorted=wsorted, test=1)[1])
 
                 losses.append(neg_log_likelihood.cpu().data.numpy())
 
@@ -326,22 +337,6 @@ class Tagger(nn.Module):
                 for p in l:
                     cat.append(p)
             preds = cat
-
-        # for i, (s, t, l) in enumerate(zip(tqdm(sentences), tags)):
-        #             inputs = prepare_sequence(s, volatile=True)
-        #             targets = prepare_sequence(t, volatile=True)
-
-        #             if self.crf:
-        #                 neg_log_likelihood = self.neg_log_likelihood(inputs, targets)
-
-        #                 preds.append(self.forward(prepare_sequence(s), test=1)[1])
-        #                 losses.append(neg_log_likelihood.cpu().data.numpy())
-
-        #             else:
-        #                 scores = self.forward(inputs, test=1)
-
-        #                 preds.append(scores.cpu().data.numpy())
-        #                 losses.append(nn.NLLLoss()(scores, targets).cpu().data.numpy())
 
         self.volatile = False
 

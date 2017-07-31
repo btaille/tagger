@@ -2,6 +2,7 @@ from nltk.corpus.reader.conll import ConllCorpusReader
 from time import time
 import os
 import pickle
+from tqdm import tqdm
 
 def load_conll03(files=["eng.train", "eng.testa", "eng.testb"], max_len=200):
     start = time()
@@ -108,6 +109,8 @@ def load_internal_conll(files, data_path = "data/wikipedia2/"):
 
         data = []
         sentences = conll_reader.iob_sents()
+        
+        print(len(sentences))
 
         for s in sentences:
             if not s == []:
@@ -122,3 +125,88 @@ def load_internal_conll(files, data_path = "data/wikipedia2/"):
 
     print("Loaded %s in %s seconds" % ('_'.join(files), time() - start))
     return data
+
+
+def load_internal_wiki(filename, begin=0, end=-1, data_path="data/wikipedia3/"):
+    start = time()  
+    
+    if os.path.exists(data_path + "%s_%s_%s"%(filename, begin, end) + ".p"):
+        with open(data_path + "%s_%s_%s"%(filename, begin, end) + ".p", "rb") as file:
+            data = pickle.load(file)
+                        
+    else:        
+        with open(data_path + filename, "r", encoding="utf8") as file:
+            previous = "\n"
+            sentences = []
+            tags = []
+            current_sent = []
+            current_tag = []
+                        
+            for i, line in enumerate(tqdm(file.readlines(end))):
+                if i >= begin:
+                    if len(line.split()) > 1 :
+                        assert len(line.split()) == 2
+                        w, t = line.split()
+                        current_sent.append(w)
+                        current_tag.append(t)
+
+                    elif len(current_sent):
+                        sentences.append(current_sent)
+                        tags.append(current_tag)
+                        current_sent = []
+                        current_tag = []
+                           
+        data = (sentences, tags)
+                           
+        with open(data_path + "%s_%s_%s"%(filename, begin, end) + ".p", "wb") as file:
+            pickle.dump(data, file)
+
+    print("Loaded %s:%s-%s in %s seconds" % (filename, begin, end, time() - start))
+    return data
+
+
+def compute_internal_dicts(filename, data_path="data/wikipedia3/", lower=False):
+    start = time() 
+    w2idx = {}
+    tag2idx = {}
+    c2idx = {}
+    
+    if os.path.exists(data_path + "w2idx_%s_l%s" % (filename, int(lower)) + ".p"):
+        with open(data_path + "w2idx_%s_l%s" % (filename, int(lower)) + ".p", "rb") as file:
+            w2idx = pickle.load(file)
+        with open(data_path + "tag2idx_%s_l%s" % (filename, int(lower)) + ".p", "rb") as file:
+            tag2idx = pickle.load(file)
+        with open(data_path + "c2idx_%s_l%s" % (filename, int(lower)) + ".p", "rb") as file:
+            c2idx = pickle.load(file)
+                        
+    else:
+        with open(data_path + filename, "r", encoding="utf8") as file:
+            for line in tqdm(file):
+                if len(line.split()) > 1 :
+                    assert len(line.split()) == 2
+                    w_raw, t = line.split()
+                    if lower:
+                        w = w.lower()
+                    else:
+                        w = w_raw
+                    if w not in w2idx:
+                        w2idx[w] = len(w2idx) + 1
+                        for c in w_raw:
+                            if c not in c2idx:
+                                c2idx[c] = len(c2idx) + 1
+
+                    if t not in tag2idx:
+                        tag2idx[t] = len(tag2idx) + 1
+        with open(data_path + "w2idx_%s_l%s" % (filename, int(lower)) + ".p", "wb") as file:
+            w2idx = pickle.dump(w2idx, file)
+        with open(data_path + "tag2idx_%s_l%s" % (filename, int(lower)) + ".p", "wb") as file:
+            tag2idx = pickle.dump(tag2idx, file)
+        with open(data_path + "c2idx_%s_l%s" % (filename, int(lower)) + ".p", "wb") as file:
+            c2idx = pickle.dump(c2idx, file)
+            
+    print("Computed word and tag dict in %s", time() - start)
+    return w2idx, c2idx, tag2idx
+    
+    
+    
+    
