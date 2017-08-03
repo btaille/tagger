@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import torch.utils.data
+from utils import sent2seq, sent2chars
 
 def cap_feature(s):
     """
@@ -104,3 +105,68 @@ def pad_list(x, pad_index=0):
         batch[i, :lens[idx]] = torch.LongTensor(x[idx])
     
     return batch, sorted(lens, reverse=True), sorted_indices
+
+class CoNLLDataset_chars(torch.utils.data.Dataset):
+    def __init__(self, X, chars, lens, wlens, wsorted, y=None):
+        self.words = X
+        self.chars = chars
+        self.lens = lens
+        self.wlens = wlens
+        self.wsorted = wsorted
+        self.labels = y
+        
+    def __getitem__(self, idx):
+        if self.labels is not None:
+            return self.words[idx], self.chars[idx], self.labels[idx], self.lens[idx], self.wlens[idx], self.wsorted[idx]
+        else:
+            return self.words[idx], self.chars[idx], self.lens[idx], self.wlens[idx], self.wsorted[idx]
+            
+    def __len__(self):
+        return len(self.words)
+
+def pad_chars(chars, pad_index=0):
+    lens_sents = [len(s) for s in chars]
+    lens_words = [[len(w) for w in s] for s in chars]
+    sorted_sents = sorted(range(len(lens_sents)), key=lambda k: lens_sents[k], reverse=True)
+        
+    maxlen_sent = max(lens_sents)
+    maxlen = max(np.concatenate(lens_words))
+    
+    
+    unrolled = []
+    for s in chars:
+        for w in s:
+            unrolled.append(w)
+    
+    batch = pad_index * torch.ones(len(chars), int(maxlen_sent), int(maxlen)).long()
+    sorted_indices = pad_index * torch.ones(len(chars), int(maxlen_sent)).long()
+    wlens = pad_index * torch.ones(len(chars), int(maxlen_sent)).long()
+    
+    for i, s in enumerate(sorted_sents):
+        ordered, _, sorted_ids = pad_list(chars[s], pad_index)
+        for j, w in enumerate(ordered):
+            batch[i, j, :lens_words[s][sorted_ids[j]]] = torch.LongTensor(w[:lens_words[s][sorted_ids[j]]])
+            sorted_indices[i, :lens_sents[s]] = torch.LongTensor(sorted_ids)
+            wlens[i, :lens_sents[s]] = torch.LongTensor(lens_words[s])
+            
+    return batch, wlens, sorted_indices
+
+
+def loader(sents, w2idx, c2idx, tags=None, batch_size=1, lower=False):
+    sequences = sent2seq(sents, w2idx, lower=lower)
+    sequences_chars = sent2chars(sents, c2idx)
+    
+    words, lens, sorted_ids = pad_list(sequences)
+    chars, wlens, wsorted_ids = pad_chars(sequences_chars)
+    
+    if tags is not None:
+        labels, _, sorted_ids_tags = pad_list(tags)
+        assert sorted_ids == sorted_ids_tags
+        
+    else:
+        labels = None
+        
+    dataset = CoNLLDataset_chars(words, chars, lens, wlens, wsorted_ids, y=labels)        
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=0, pin_memory=True)
+    
+    return loader, sorted_ids

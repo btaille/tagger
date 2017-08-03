@@ -1,19 +1,23 @@
 import re
 import operator
-
-def sent2seq(sents, w2idx, idx_unknown=None):
-    if idx_unknown is None:
-        idx_unknown = max(w2idx.values())
-    return [[w2idx[w] if w in w2idx.keys() else idx_unknown for w in sent] for sent in sents]
+import os
+import pickle
 
 
-def sent2chars(sents, c2idx, idx_unknown=None, inv=False):
-    if idx_unknown is None:
-        idx_unknown = max(c2idx.values())
+def sent2seq(sents, w2idx, idx_unknown=0, lower=False):
+    if lower:
+        return [[w2idx[w.lower()] if w.lower() in w2idx.keys() else idx_unknown for w in sent] for sent in sents]
+    else:
+        return [[w2idx[w] if w in w2idx.keys() else idx_unknown for w in sent] for sent in sents]
+
+
+def sent2chars(sents, c2idx, idx_unknown=0, inv=False):
     if inv:
-        return  [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w] for w in sent] for sent in sents], [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w[::-1]] for w in sent] for sent in sents]
+        return [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w] for w in sent] for sent in sents], [
+            [[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w[::-1]] for w in sent] for sent in sents]
     else:
         return [[[c2idx[c] if c in c2idx.keys() else idx_unknown for c in w] for w in sent] for sent in sents]
+
 
 def word_index(sents, lower=False, begin_one=True):
     w2idx = {}
@@ -28,7 +32,8 @@ def word_index(sents, lower=False, begin_one=True):
                     w2idx[w] = len(w2idx)
     idx2w = {v: k for k, v in w2idx.items()}
     return w2idx, idx2w
-    
+
+
 def word_index_lim(sents, lower=False, min_occ=5):
     w2idx = {}
     occs = {}
@@ -40,13 +45,13 @@ def word_index_lim(sents, lower=False, min_occ=5):
                 w2idx[w] = len(w2idx) + 1
                 occs[w] = 1
             else:
-                occs[w] += 1 
+                occs[w] += 1
 
-    # sort = sorted(occs.items(), key=operator.itemgetter(1))        
+                # sort = sorted(occs.items(), key=operator.itemgetter(1))
 
-    w2idx = {w:i for w,i in w2idx.items() if occs[w] >= min_occ}
+    w2idx = {w: i for w, i in w2idx.items() if occs[w] >= min_occ}
     idx2w = {v: k for k, v in w2idx.items()}
-    
+
     return w2idx, idx2w, occs
 
 
@@ -78,11 +83,41 @@ def add_unknown(w2idx, idx2w, idx_unknown=0):
         idx2w[idx_unknown] = "<UNK>"
         print("test")
         w2idx["<UNK>"] = idx_unknown
-    
+
     return w2idx, idx2w
-    
+
+
 def zero_digits(s):
     """
     Replace every digit in a string by a zero.
     """
     return re.sub('\d', '0', s)
+
+
+def save_mappings(w2idx, c2idx, t2idx, name, mappings_path="mappings/"):
+    if not os.path.exists(mappings_path + name + "/w2idx.p"):
+        if not os.path.exists(mappings_path + name):
+            os.makedirs(mappings_path + name)
+
+        with open(mappings_path + name + "/w2idx.p", "wb") as file:
+            pickle.dump(w2idx, file)
+        with open(mappings_path + name + "/c2idx.p", "wb") as file:
+            pickle.dump(c2idx, file)
+        with open(mappings_path + name + "/t2idx.p", "wb") as file:
+            pickle.dump(t2idx, file)
+
+
+def load_mappings(name, mappings_path="mappings/"):
+    if os.path.exists(mappings_path + name + "/w2idx.p"):
+        with open(mappings_path + name + "/w2idx.p", "rb") as file:
+            w2idx = pickle.load(file)
+        with open(mappings_path + name + "/c2idx.p", "rb") as file:
+            c2idx = pickle.load(file)
+        with open(mappings_path + name + "/t2idx.p", "rb") as file:
+            t2idx = pickle.load(file)
+
+        return w2idx, c2idx, t2idx
+
+
+def reverse_dict(dictionary):
+    return {v: k for k, v in dictionary.items()}

@@ -142,7 +142,7 @@ def load_internal_wiki(filename, begin=0, end=-1, data_path="data/wikipedia3/"):
             current_sent = []
             current_tag = []
                         
-            for i, line in enumerate(tqdm(file.readlines(end))):
+            for i, line in enumerate(tqdm(file)):
                 if i >= begin:
                     if len(line.split()) > 1 :
                         assert len(line.split()) == 2
@@ -155,6 +155,9 @@ def load_internal_wiki(filename, begin=0, end=-1, data_path="data/wikipedia3/"):
                         tags.append(current_tag)
                         current_sent = []
                         current_tag = []
+                        
+                if i == end:
+                    break
                            
         data = (sentences, tags)
                            
@@ -186,7 +189,7 @@ def compute_internal_dicts(filename, data_path="data/wikipedia3/", lower=False):
                     assert len(line.split()) == 2
                     w_raw, t = line.split()
                     if lower:
-                        w = w.lower()
+                        w = w_raw.lower()
                     else:
                         w = w_raw
                     if w not in w2idx:
@@ -198,15 +201,12 @@ def compute_internal_dicts(filename, data_path="data/wikipedia3/", lower=False):
                     if t not in tag2idx:
                         tag2idx[t] = len(tag2idx) + 1
         with open(data_path + "w2idx_%s_l%s" % (filename, int(lower)) + ".p", "wb") as file:
-            w2idx = pickle.dump(w2idx, file)
+            pickle.dump(w2idx, file)
         with open(data_path + "tag2idx_%s_l%s" % (filename, int(lower)) + ".p", "wb") as file:
-            tag2idx = pickle.dump(tag2idx, file)
+            pickle.dump(tag2idx, file)
         with open(data_path + "c2idx_%s_l%s" % (filename, int(lower)) + ".p", "wb") as file:
-            c2idx = pickle.dump(c2idx, file)
+            pickle.dump(c2idx, file)
             
     print("Computed word and tag dict in %s", time() - start)
     return w2idx, c2idx, tag2idx
-    
-    
-    
     

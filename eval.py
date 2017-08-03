@@ -125,7 +125,7 @@ def eval_ner_crf(sents_test_ner, preds, tags, tag2idx, idx2tag, model_path, name
 
 
 def conll_eval(sents, truths, preds, tag_to_id, id_to_tag, model_path, name="test"):
-    eval_script =  "/media/bruno/DATA/Projects/NER/conlleval"
+    eval_script = "/media/bruno/DATA/Projects/NER/conlleval"
 
     n_tags = len(tag_to_id)
     predictions = []
