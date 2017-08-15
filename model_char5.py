@@ -68,7 +68,6 @@ class Tagger(nn.Module):
         if freeze_embeddings:
             self.word_embeddings.weight.requires_grad = False
 
-
     def init_hidden(self, batch_size=1):
         return (cuda(autograd.Variable(torch.randn(2, batch_size, self.hidden_dim // 2))),
                 cuda(autograd.Variable(torch.randn(2, batch_size, self.hidden_dim // 2))))
@@ -357,7 +356,6 @@ class Tagger(nn.Module):
             for i, (words, chars, lens, wlens, wsorted) in tqdm(enumerate(loader_test)):
                 words_in = autograd.Variable(cuda(words[:, :lens.numpy()[0]]), volatile=True)
                 chars_in = autograd.Variable(cuda(chars[:, :lens.numpy()[0]]), volatile=True)
-
 
                 scores = self.get_lstm_feats(words_in, lens, chars=chars_in, wlens=wlens, wsorted=wsorted, test=1)
 
