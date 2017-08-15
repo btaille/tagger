@@ -69,7 +69,6 @@ class Tagger(nn.Module):
             self.word_embeddings.weight.requires_grad = False
 
 
-
     def init_hidden(self, batch_size=1):
         return (cuda(autograd.Variable(torch.randn(2, batch_size, self.hidden_dim // 2))),
                 cuda(autograd.Variable(torch.randn(2, batch_size, self.hidden_dim // 2))))
