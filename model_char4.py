@@ -1,7 +1,6 @@
 import torch
 import torch.autograd as autograd
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence, PackedSequence
 
@@ -11,8 +10,7 @@ import os
 import pickle
 import numpy as np
 
-from torch_utils import prepare_sequence, prepare_sequence_float, tensor
-from eval2 import eval, micro_precision_recall_f1_accuracy, eval_metrics, eval_metrics_crf, save_plot
+from eval import eval_metrics_crf, save_plot
 from loader import loader, order
 
 def cuda(tensor):

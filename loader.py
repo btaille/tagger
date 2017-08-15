@@ -94,17 +94,24 @@ class CoNLLDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.data)
 
-def pad_list(x, pad_index=0):
+def pad_list(x, pad_index=0, sort=True):
     lens = [len(s) for s in x]
     maxlen = max(lens)    
-    sorted_indices = sorted(range(len(lens)), key=lambda k: lens[k], reverse=True)
+    
+    if sort:
+        indices = sorted(range(len(lens)), key=lambda k: lens[k], reverse=True)
+        lens = sorted(lens, reverse=True)
+    else:
+        indices = range(len(lens))
     
     batch = pad_index * torch.ones(len(x), maxlen).long()
-    
-    for i, idx in enumerate(sorted_indices):
+
+    for i, idx in enumerate(indices):
         batch[i, :lens[idx]] = torch.LongTensor(x[idx])
+
+    return batch, lens, indices
+
     
-    return batch, sorted(lens, reverse=True), sorted_indices
 
 class CoNLLDataset_chars(torch.utils.data.Dataset):
     def __init__(self, X, chars, lens, wlens, wsorted, y=None):
@@ -123,12 +130,37 @@ class CoNLLDataset_chars(torch.utils.data.Dataset):
             
     def __len__(self):
         return len(self.words)
+    
+    
+class CoNLLDataset_shuffle(torch.utils.data.Dataset):
+    def __init__(self, X, chars, lens, wlens, wsorted, y=None):
+        self.words = X
+        self.chars = chars
+        self.lens = lens
+        self.wlens = wlens
+        self.wsorted = wsorted
+        self.labels = y
+        
+    def __getitem__(self, idx):
+        if self.labels is not None:
+            return self.words[idx], self.chars[idx], self.labels[idx], self.lens[idx], self.wlens[idx], self.wsorted[idx]
+        else:
+            return self.words[idx], self.chars[idx], self.lens[idx], self.wlens[idx], self.wsorted[idx]
+            
+    def __len__(self):
+        return len(self.words)    
+    
 
-def pad_chars(chars, pad_index=0):
+
+def pad_chars(chars, pad_index=0, sort=True):
     lens_sents = [len(s) for s in chars]
     lens_words = [[len(w) for w in s] for s in chars]
-    sorted_sents = sorted(range(len(lens_sents)), key=lambda k: lens_sents[k], reverse=True)
-        
+    
+    if sort:
+        sorted_sents = sorted(range(len(lens_sents)), key=lambda k: lens_sents[k], reverse=True)
+    else:
+        sorted_sents = range(len(lens_sents))
+    
     maxlen_sent = max(lens_sents)
     maxlen = max(np.concatenate(lens_words))
     
@@ -143,7 +175,7 @@ def pad_chars(chars, pad_index=0):
     wlens = pad_index * torch.ones(len(chars), int(maxlen_sent)).long()
     
     for i, s in enumerate(sorted_sents):
-        ordered, _, sorted_ids = pad_list(chars[s], pad_index)
+        ordered, _, sorted_ids = pad_list(chars[s], pad_index, sort=False)
         for j, w in enumerate(ordered):
             batch[i, j, :lens_words[s][sorted_ids[j]]] = torch.LongTensor(w[:lens_words[s][sorted_ids[j]]])
             sorted_indices[i, :lens_sents[s]] = torch.LongTensor(sorted_ids)
@@ -152,21 +184,57 @@ def pad_chars(chars, pad_index=0):
     return batch, wlens, sorted_indices
 
 
-def loader(sents, w2idx, c2idx, tags=None, batch_size=1, lower=False):
+def loader(sents, w2idx, c2idx, tags=None, batch_size=1, lower=False, sort=True, shuffle=False):
     sequences = sent2seq(sents, w2idx, lower=lower)
     sequences_chars = sent2chars(sents, c2idx)
     
-    words, lens, sorted_ids = pad_list(sequences)
-    chars, wlens, wsorted_ids = pad_chars(sequences_chars)
+    words, lens, sorted_ids = pad_list(sequences, sort=sort)
+    chars, wlens, wsorted_ids = pad_chars(sequences_chars, sort=sort)
     
     if tags is not None:
-        labels, _, sorted_ids_tags = pad_list(tags)
+        labels, _, sorted_ids_tags = pad_list(tags, sort=sort)
         assert sorted_ids == sorted_ids_tags
         
     else:
         labels = None
         
     dataset = CoNLLDataset_chars(words, chars, lens, wlens, wsorted_ids, y=labels)        
-    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=0, pin_memory=True)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, num_workers=0, shuffle=shuffle, pin_memory=True)
     
     return loader, sorted_ids
+
+
+def order(words, chars, lens, wlens, wsorted_ids, y=None):
+    sorted_indices = sorted(range(len(lens)), key=lambda k: lens[k], reverse=True)    
+    
+    sorted_words = words.clone()
+    for i, idx in enumerate(sorted_indices):
+        sorted_words[i] = words[idx]
+        
+    sorted_chars = chars.clone()
+    for i, idx in enumerate(sorted_indices):
+        sorted_chars[i] = chars[idx]
+    
+    sorted_lens = lens.clone()
+    for i, idx in enumerate(sorted_indices):
+        sorted_lens[i] = lens[idx]
+        
+    sorted_wlens = wlens.clone()
+    for i, idx in enumerate(sorted_indices):
+        sorted_wlens[i] = wlens[idx]
+        
+    sorted_wsorted_ids = wsorted_ids.clone()
+    for i, idx in enumerate(sorted_indices):
+        sorted_wsorted_ids[i] = wsorted_ids[idx]
+        
+#     sorted_lens = [lens[idx] for idx in sorted_indices]
+#     sorted_wlens = [wlens[idx] for idx in sorted_indices]
+#     sorted_wsorted_ids = [wsorted_ids[idx] for idx in sorted_indices]
+    
+    sorted_y = None
+    if y is not None:
+        sorted_y = y.clone()
+        for i, idx in enumerate(sorted_indices):
+            sorted_y[i] = y[idx]
+    
+    return  sorted_words, sorted_chars, sorted_lens, sorted_wlens, sorted_wsorted_ids, sorted_y , sorted_indices
